@@ -41,6 +41,27 @@
 #define MAX_LIFETIME	100.0		/* max. conn. lifetime in seconds */
 #define BIN_WIDTH	1e-3
 #define NUM_BINS	((u_int) (MAX_LIFETIME / BIN_WIDTH))
+#ifdef EXTENDED_STATS
+  #define MAX_CONC_CONN	  	1000
+  #define CONC_BIN_WIDTH	1
+  #define CONC_NUM_BINS		((u_int) (MAX_CONC_CONN/CONC_BIN_WIDTH))
+  #define MAX_LOG_SIZE		900000
+  struct log
+  {	
+	Time start;
+	Time connect;
+	Time reply;
+	Time xfer;
+	u_int response_size;
+	u_int num_active_conns;
+        int id;
+  };
+#endif
+
+/* diwa */
+
+
+	
 
 static struct
   {
@@ -69,11 +90,14 @@ static struct
     Time reply_rate_max;
 
     u_int num_connects;		/* # of completed connect()s */
-    Time conn_connect_sum;	/* sum of connect times */
-
+    Time conn_connect_sum;  	/* sum of connect times */
+    /*diwa*/
+    #ifdef EXTENDED_STATS
+       u_int conc_conn_hist[CONC_NUM_BINS];
+       struct log measurement[MAX_LOG_SIZE];
+    #endif
     u_int num_responses;
     Time call_response_sum;	/* sum of response times */
-
     Time call_xfer_sum;		/* sum of response times */
 
     u_int num_sent;		/* # of requests sent */
@@ -88,8 +112,14 @@ static struct
   }
 basic;
 
-static u_int num_active_conns;
-static u_int num_replies;	/* # of replies received in this interval */
+
+
+static u_int num_active_conns = 0;
+static u_int num_replies = 0;	/* # of replies received in this interval */
+#ifdef EXTENDED_STATS
+	static long measure_index = 0;
+	static Time start;
+#endif
 
 static void
 perf_sample (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
@@ -140,10 +170,12 @@ conn_fail (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
     case EMFILE:	++basic.num_sock_fdunavail; break;
     case ENFILE:	++basic.num_sock_ftabfull; break;
     case ECONNREFUSED:	++basic.num_sock_refused; break;
-    case ETIMEDOUT:	++basic.num_sock_timeouts; break;
-
+    case ETIMEDOUT:
+		printf("\n-------------------------------------------------");
+		++basic.num_sock_timeouts; break;
     case EPIPE:
-    case ECONNRESET:
+    case ECONNRESET:	
+		printf("\n************************************************");
       ++basic.num_sock_reset;
       break;
 
@@ -162,7 +194,18 @@ conn_fail (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
 static void
 conn_created (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type c_arg)
 {
+  #ifdef EXTENDED_STATS
+    u_int bin;
+  #endif
   ++num_active_conns;
+
+  #ifdef EXTENDED_STATS
+
+  bin=num_active_conns*CONC_NUM_BINS/MAX_CONC_CONN;
+  if(bin>=CONC_NUM_BINS)
+     bin=CONC_NUM_BINS-1;
+  ++basic.conc_conn_hist[bin];
+  #endif
   if (num_active_conns > basic.max_conns)
     basic.max_conns = num_active_conns;
 }
@@ -182,10 +225,13 @@ static void
 conn_connected (Event_Type et, Object *obj, Any_Type reg_arg,
 		Any_Type call_arg)
 {
+  /*diwa*/
+  Time connect_time;
   Conn *s = (Conn *) obj;
-
   assert (et == EV_CONN_CONNECTED && object_is_conn (s));
-  basic.conn_connect_sum += timer_now () - s->basic.time_connect_start;
+  connect_time=timer_now () - s->basic.time_connect_start;
+  basic.conn_connect_sum += connect_time;
+  s->basic.connect=connect_time;
   ++basic.num_connects;
 }
 
@@ -216,6 +262,7 @@ conn_destroyed (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type c_arg)
       ++basic.conn_lifetime_hist[bin];
     }
   --num_active_conns;
+ 
 }
 
 static void
@@ -243,14 +290,16 @@ static void
 recv_start (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
 {
   Call *c = (Call *) obj;
-  Time now;
-
+  /*diwa*/
+  Time now,response_time;
   assert (et == EV_CALL_RECV_START && object_is_call (c));
 
   now = timer_now ();
+  response_time=now - c->basic.time_send_start;
 
-  basic.call_response_sum += now - c->basic.time_send_start;
+  basic.call_response_sum += response_time;
   c->basic.time_recv_start = now;
+  c->basic.reply=response_time;
   ++basic.num_responses;
 }
 
@@ -259,13 +308,12 @@ recv_stop (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
 {
   Call *c = (Call *) obj;
   int index;
-
+  Time transfer_time;
   assert (et == EV_CALL_RECV_STOP && object_is_call (c));
   assert (c->basic.time_recv_start > 0);
-
-  basic.call_xfer_sum += timer_now () - c->basic.time_recv_start;
-
-  basic.hdr_bytes_received += c->reply.header_bytes;
+  transfer_time=timer_now () - c->basic.time_recv_start;
+  basic.call_xfer_sum += transfer_time;
+ basic.hdr_bytes_received += c->reply.header_bytes;
   basic.reply_bytes_received += c->reply.content_bytes;
   basic.footer_bytes_received += c->reply.footer_bytes;
 
@@ -273,7 +321,22 @@ recv_stop (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
   assert ((unsigned) index < NELEMS (basic.num_replies));
   ++basic.num_replies[index];
   ++num_replies;
-
+#ifdef EXTENDED_STATS
+  	basic.measurement[measure_index].connect=c->conn->basic.connect;
+        basic.measurement[measure_index].reply=c->basic.reply;
+  	basic.measurement[measure_index].xfer=transfer_time;
+	basic.measurement[measure_index].response_size = c->reply.header_bytes + c->reply.content_bytes + c->reply.footer_bytes;
+        basic.measurement[measure_index].id = c->sess_id;
+	if(c->conn->basic.connect!=-1)		
+		basic.measurement[measure_index].start=c->conn->basic.time_connect_start-start;
+  	else		
+		basic.measurement[measure_index].start=c->basic.time_send_start-start;
+  	basic.measurement[measure_index].num_active_conns=num_active_conns;
+  	measure_index++;
+  	if(measure_index==MAX_LOG_SIZE)
+		measure_index=0;
+#endif
+  c->conn->basic.connect=-1;
   ++c->conn->basic.num_calls_completed;
 }
 
@@ -284,8 +347,10 @@ init (void)
 
   basic.conn_lifetime_min = DBL_MAX;
   basic.reply_rate_min = DBL_MAX;
-
   arg.l = 0;
+  #ifdef EXTENDED_STATS
+	start=timer_now();
+  #endif
   event_register_handler (EV_PERF_SAMPLE, perf_sample, arg);
   event_register_handler (EV_CONN_FAILED, conn_fail, arg);
   event_register_handler (EV_CONN_TIMEOUT, conn_timeout, arg);
@@ -302,6 +367,10 @@ init (void)
 static void
 dump (void)
 {
+  #ifdef EXTENDED_STATS
+    FILE *concurrent;
+    FILE *reply;
+  #endif
   Time conn_period = 0.0, call_period = 0.0;
   Time conn_time = 0.0, resp_time = 0.0, xfer_time = 0.0;
   Time call_size = 0.0, hdr_size = 0.0, reply_size = 0.0, footer_size = 0.0;
@@ -352,7 +421,7 @@ dump (void)
 				  basic.conn_lifetime_sum2,
 				  basic.num_lifetimes);
       n = 0;
-      for (i = 0; i < NUM_BINS; ++i)
+      for (i = 0; i < NUM_BINS; i++)
 	{
 	  n += basic.conn_lifetime_hist[i];
 	  if (n >= 0.5*basic.num_lifetimes)
@@ -450,6 +519,44 @@ dump (void)
 	  basic.num_sock_refused, basic.num_sock_reset,
 	  basic.num_sock_fdunavail, basic.num_sock_addrunavail,
 	  basic.num_sock_ftabfull, basic.num_other_errors);
+ /*diwa*/
+
+#ifdef EXTENDED_STATS
+
+  concurrent=fopen("concurrent.txt","w");
+  if(!concurrent)
+	   printf("\nError: Unable to Open the Concurrent File\nFailed to save Concurrent Connections Data\n");
+  reply=fopen(param.rfile_name,"w");
+  if (!reply)
+	  printf("\nError: Unable to Open the Reply File\nFailed to save detailed output in the Reply File\n");
+  else
+  printf("befor print loop");
+   
+   if(concurrent)
+   {
+     
+     for (i = 0; i < CONC_NUM_BINS; i++)
+     {
+        fprintf(concurrent,"%d,%d\n",(i+1),basic.conc_conn_hist[i]);
+     }
+     fclose(concurrent);
+   }
+
+   if(reply)
+   {
+      printf("Entered the print loop %d ",measure_index);
+      for (i = 0; i < measure_index; i++)
+      {
+        if(basic.measurement[i].connect==-1)
+			basic.measurement[i].connect=-1/1e3;
+		/* RSH : Precisions increased to microsecond*/
+        fprintf(reply,"%.3f,%.3f,%.3f,%.3f,%d,%d,%d\n",basic.measurement[i].start*1e3,basic.measurement[i].connect*1e3,basic.measurement[i].reply*1e3,basic.measurement[i].xfer*1e3,basic.measurement[i].num_active_conns,basic.measurement[i].response_size,basic.measurement[i].id);
+      }
+      fclose(reply);
+   }
+
+#endif
+
 }
 
 Stat_Collector stats_basic =

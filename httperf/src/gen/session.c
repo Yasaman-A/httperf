@@ -408,7 +408,7 @@ session_issue_call (Sess *sess, Call *call)
       if (ci->num_pending < param.max_piped)
 	{
 	  ++ci->num_pending;
-	  ci->call[ci->wr] = call;
+          ci->call[ci->wr] = call;
 	  call_inc_ref (call);
 	  ci->wr = (ci->wr + 1) % MAX_PIPED;
 	  send_calls (sess, ci);

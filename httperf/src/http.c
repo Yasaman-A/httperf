@@ -157,6 +157,9 @@ parse_status_line (Call *c, char **bufp, size_t *buf_lenp)
 	    {
 	    case 204: /* No Content */
 	    case 205: /* Reset Content */
+	    case 302:
+	      s->has_body = 0;
+              break;
 	    case 304: /* Not Modified */
 	      s->has_body = 0;
 	      break;
@@ -223,8 +226,6 @@ parse_headers (Call *c, char **bufp, size_t *buf_lenp)
 	    {
 	      hdr += 15;
 	      s->content_length = strtoul (hdr, 0, 10);
-	      if (!s->content_length)
-	    s->has_body = 0;
 	    }
 	  break;
 

@@ -24,13 +24,16 @@
 
 #ifndef httperf_h
 #define httperf_h
+#define DEBUG
 
 #include "config.h"
-
+#include <time.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/resource.h>
 
+#define VERSION	"0.9-patched"
+#define MAX_IAT_VALUES 5000
 typedef double Time;
 
 #define NELEMS(a)	((sizeof (a)) / sizeof ((a)[0]))
@@ -55,7 +58,8 @@ typedef enum Dist_Type
   {
     DETERMINISTIC,	/* also called fixed-rate */
     UNIFORM,		/* over interval [min_iat,max_iat) */
-    EXPONENTIAL		/* with mean mean_iat */
+    EXPONENTIAL, 	/* with mean mean_iat */
+    SPECIFIED
   }
 Dist_Type;
 
@@ -88,6 +92,8 @@ typedef struct Rate_Info
     Time mean_iat;		/* mean interarrival time */
     Time min_iat;		/* min interarrival time (for UNIFORM) */
     Time max_iat;	        /* max interarrival time (for UNIFORM) */
+    /*double *iat_values;
+    int total_iat_values;*/
   }
 Rate_Info;
 
@@ -99,6 +105,7 @@ typedef struct Cmdline_Params
     int http_version;	/* (default) HTTP protocol version */
     const char *server;	/* (default) hostname */
     const char *server_name; /* fully qualified server name */
+    const char *rfile_name;
     int port;		/* (default) server port */
     const char *uri;	/* (default) uri */
     Rate_Info rate;
@@ -161,6 +168,12 @@ typedef struct Cmdline_Params
     wsesslog;
     struct
       {
+	 u_int num_sessions;    /* # of user-sessions */
+         char *file;            /* name of the file where session defs are */
+      }
+     wsessreq;
+    struct
+      {
 	u_int num_files;
 	double target_miss_rate;
       }
@@ -175,7 +188,8 @@ extern Time test_time_start;
 extern Time test_time_stop;
 extern struct rusage test_rusage_start;
 extern struct rusage test_rusage_stop;
-
+extern double iat_values[MAX_IAT_VALUES];
+extern int total_iat_values;
 #ifdef HAVE_SSL
 # include <openssl/ssl.h>
   extern SSL_CTX *ssl_ctx;
@@ -185,7 +199,7 @@ extern struct rusage test_rusage_stop;
   extern int debug_level;
 # define DBG debug_level
 #else
-# define DBG 0
+# define DBG 1
 #endif
 
 extern void panic (const char *msg, ...);

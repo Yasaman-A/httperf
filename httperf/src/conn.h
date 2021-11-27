@@ -77,6 +77,7 @@ typedef struct Conn
       {
 	Time time_connect_start;	/* time connect() got called */
 	u_int num_calls_completed;	/* # of calls that completed */
+	Time connect;
       }
     basic;			/* maintained by stat/stats_basic.c */
 

@@ -52,16 +52,13 @@
 #include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
+#include <termios.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
-#include <sys/time.h>
-#include <sys/resource.h>
-
 #include <core.h>
 #include <event.h>
 #include <httperf.h>
@@ -72,11 +69,14 @@
 #  include <openssl/rand.h>
 #endif
 
+
 #define RATE_INTERVAL	5.0
 
 const char *prog_name;
 int verbose;
 Cmdline_Params param;
+double iat_values[MAX_IAT_VALUES]={0.0,};
+int total_iat_values=0;
 Time test_time_start;
 Time test_time_stop;
 struct rusage test_rusage_start;
@@ -117,6 +117,7 @@ static struct option longopts[] =
     {"rate",	     required_argument,	(int *) &param.rate,		0},
     {"recv-buffer",  required_argument, (int *) &param.recv_buffer_size, 0},
     {"retry-on-failure", no_argument,	&param.retry_on_failure,	1},
+    {"rfile-name",  required_argument, (int *) &param.rfile_name,	0},
     {"send-buffer",  required_argument, (int *) &param.send_buffer_size, 0},
     {"server",	     required_argument, (int *) &param.server,		0},
     {"server-name",  required_argument, (int *) &param.server_name,	0},
@@ -134,6 +135,7 @@ static struct option longopts[] =
     {"wlog",	     required_argument, (int *) &param.wlog,            0},
     {"wsess",	     required_argument, (int *) &param.wsess,		0},
     {"wsesslog",     required_argument, (int *) &param.wsesslog,	0},
+    {"wsessreq",     required_argument, (int *) &param.wsessreq,        0},
     {"wsesspage",    required_argument, (int *) &param.wsesspage,	0},
     {"wset",	     required_argument, (int *) &param.wset,		0},
     {0,		     0,			0,				0}
@@ -147,18 +149,18 @@ usage (void)
 	  "\t[--close-with-reset] [--debug N] [--failure-status N]\n"
 	  "\t[--help] [--hog] [--http-version S] [--max-connections N]\n"
 	  "\t[--max-piped-calls N] [--method S] [--no-host-hdr]\n"
-	  "\t[--num-calls N] [--num-conns N] [--period [d|u|e]T1[,T2]]\n"
+	  "\t[--num-calls N] [--num-conns N] [--period [s|d|u|e]T1[,T2]]\n"
 	  "\t[--port N] "
 	  "[--print-reply [header|body]] [--print-request [header|body]]\n"
 	  "\t[--rate X] [--recv-buffer N] [--retry-on-failure] "
-	  "[--send-buffer N]\n"
+	  "[--rfile-name S] [--send-buffer N]\n"
 	  "\t[--server S] [--server-name S] [--session-cookies]\n"
 #ifdef HAVE_SSL
 	  "\t[--ssl] [--ssl-ciphers L] [--ssl-no-reuse]\n"
 #endif
 	  "\t[--think-timeout X] [--timeout X] [--uri S] [--verbose] "
 	  "[--version]\n"
-	  "\t[--wlog y|n,file] [--wsess N,N,X] [--wsesslog N,X,file]\n"
+	  "\t[--wlog y|n,file] [--wsess N,N,X] [--wsesslog N,X,file] [--wsessreq N,file]\n"
 	  "\t[--wset N,X]\n",
 	  prog_name);
 }
@@ -174,6 +176,37 @@ panic (const char *msg, ...)
   exit (1);
 }
 
+int mygetch( ) {
+  struct termios oldt,
+                 newt;
+  int            ch;
+  tcgetattr( STDIN_FILENO, &oldt );
+  newt = oldt;
+  newt.c_lflag &= ~( ICANON | ECHO );
+  tcsetattr( STDIN_FILENO, TCSANOW, &newt );
+  ch = getchar();
+  tcsetattr( STDIN_FILENO, TCSANOW, &oldt );
+  return ch;
+}
+char * GetDefName(time_t current_time){
+	struct tm *ct;
+	char * temp;
+	ct=NULL;
+	temp=NULL;
+
+	ct=localtime(&current_time);
+	if(!ct){
+		printf("Unable to get date and time");
+		return(NULL);
+		}
+	temp= malloc(25*sizeof(char));
+	if(!temp){
+		printf("Failed to allocate memory");
+		return(NULL);
+	}
+	sprintf(temp,"%.4d_%.2d_%.2d-%.2d_%.2d_%.2d.csv",ct->tm_year+1900,ct->tm_mon+1,ct->tm_mday,ct->tm_hour,ct->tm_min,ct->tm_sec);
+	return(temp);
+}
 void
 no_op (void)
 {
@@ -196,7 +229,7 @@ int
 main (int argc, char **argv)
 {
   extern Load_Generator uri_fixed, uri_wlog, uri_wset, conn_rate, call_seq;
-  extern Load_Generator wsess, wsesslog, wsesspage, sess_cookie, misc;
+  extern Load_Generator wsess, wsesslog, wsessreq, wsesspage, sess_cookie, misc;
   extern Stat_Collector stats_basic, session_stat;
   extern Stat_Collector stats_print_reply;
   extern char *optarg;
@@ -220,6 +253,13 @@ main (int argc, char **argv)
   void *flag;
   Time t;
 
+FILE *iatfile;
+FILE *rfile;
+char line[100];
+char *iatf;
+int index;
+char temp;
+time_t s_time;
 #ifdef __FreeBSD__
   /* This works around a bug in earlier versions of FreeBSD that cause
      non-finite IEEE arithmetic to cause SIGFPE instead of the
@@ -233,8 +273,16 @@ main (int argc, char **argv)
   param.http_version = 0x10001;		/* default to HTTP/1.1 */
   param.client.id = 0;
   param.client.num_clients = 1;
-  param.server = "localhost";
-  param.port = -1;
+  param.server = "localhost"; 
+  /*RSH*/
+  s_time = time(NULL);
+  param.rfile_name=GetDefName(s_time);
+  if (!param.rfile_name)
+	  param.rfile_name="reply.csv";
+  /* For rnadomizing output of rand() function that is used in wsesslog.c */
+  srand(s_time);
+  /*\RSH*/
+    param.port = -1;
   param.uri = "/";
   param.num_calls = 1;
   param.burst_len = 1;
@@ -248,13 +296,17 @@ main (int argc, char **argv)
   param.ssl_reuse = 1;
 #endif
 
+iatf='\0';
+index=0;
+/*param.rate.iat_values='\0';*/
+
   /* get program name: */
   prog_name = strrchr (argv[0], '/');
   if (prog_name)
     ++prog_name;
   else
     prog_name = argv[0];
-
+	
   /* process command line options: */
   while ((ch = getopt_long (argc, argv, "d:hvV", longopts, &longindex)) >= 0)
     {
@@ -399,13 +451,13 @@ main (int argc, char **argv)
 		  case 'd': param.rate.dist = DETERMINISTIC; break;
 		  case 'u': param.rate.dist = UNIFORM; break;
 		  case 'e': param.rate.dist = EXPONENTIAL; break;
+          case 's': param.rate.dist = SPECIFIED; break; /* The new choice for --period */
 		  default:
-		    fprintf (stderr, "%s: illegal interarrival distribution "
+		  fprintf (stderr, "%s: illegal interarrival distribution "
 			     "'%c' in %s\n",
 			     prog_name, optarg[-1], optarg - 1);
 		    exit (1);
 		  }
-
 	      /* remaining params depend on selected distribution: */
 	      errno = 0;
 	      switch (param.rate.dist)
@@ -450,7 +502,62 @@ main (int argc, char **argv)
 		  param.rate.mean_iat = 0.5*(param.rate.min_iat
 					     + param.rate.max_iat);
 		  break;
+		case SPECIFIED:
+                  errno=0;
+		  param.rate.mean_iat = 1.0;
 
+	      name = "bad Period filename (2nd param)";
+	      if (*optarg != ',')
+		goto bad_Period_param;
+	      optarg++;
+	      /* simulate parsing of string */
+	      iatf = optarg;
+	      if ((end = strchr (optarg, ',')) == NULL)
+		/* must be last param, position end at final \0 */
+		end = optarg + strlen(optarg);
+	      else
+		/* terminate end of string */
+		*end++ = '\0';
+	      optarg = end;
+	      name = "extraneous parameter";
+	      if (*end)
+		{
+		bad_Period_param:
+		  fprintf (stderr, "%s: %s in --period arg (rest: `%s')",
+			   prog_name, name, end);
+ 		  if (errno)
+ 		    fprintf (stderr, ": %s", strerror (errno));
+ 		  fputc ('\n', stderr);
+		  exit (1);
+		}
+                //  iatf = optarg;
+                  /*fprintf(stderr,"Specified kutikee %s\n",iatf);*/
+                  iatfile=fopen(iatf,"r");
+                  if(!iatfile)
+		  {
+			fprintf (stderr, "%s: illegal iat file %s\n", prog_name, iatf);
+			exit (1);
+		  }
+                  while(fgets(line,sizeof(line),iatfile))
+		  {
+			iat_values[index]=strtod(line,'\0');
+			if(errno== ERANGE || iat_values[index] < 0)
+			{
+				fprintf (stderr, "%s: illegal interarrival time value %f \n",prog_name, iat_values[index]);
+				exit (1);
+			}
+                        index++;
+			if(index==MAX_IAT_VALUES)
+			{
+				break;
+			}
+		  }
+		  total_iat_values=index;
+                  fclose(iatfile);
+		  errno=0;
+                  optarg=optarg+strlen(optarg);
+		  /*fprintf(stderr,"Micchudu %s\n",optarg);*/
+		  break;
 		default:
 		  fprintf (stderr, "%s: internal error parsing %s\n",
 			   prog_name, optarg);
@@ -517,6 +624,26 @@ main (int argc, char **argv)
 	    param.server = optarg;
 	  else if (flag == &param.server_name)
 	    param.server_name = optarg;
+/*RSH*/	  
+	  else if (flag == &param.rfile_name)
+	  {		
+		  rfile=fopen(optarg,"w");
+		  if(!rfile)
+		  {
+			  fprintf (stderr, "%s: illigall Output file name %s\n", prog_name, optarg);
+			  printf ("%s: illigall Output file name %s\n Do You want to use date as file name ?(Y/N) and Enter", prog_name,optarg );
+			  while ( temp == 'y' || temp == 'Y' || temp == 'N' || temp == 'n' )
+				  temp=mygetch();
+			  if (temp == 'N' || temp == 'n')
+				  exit(1);			
+		  }
+		  else
+		  {
+			  fclose(rfile);
+			  param.rfile_name = optarg;
+		  }
+	  }
+/*\RSH*/
 #ifdef HAVE_SSL
 	  else if (flag == &param.ssl_cipher_list)
 	    param.ssl_cipher_list = optarg;
@@ -581,7 +708,7 @@ main (int argc, char **argv)
 	      optarg = end + 1;
 
 	      param.wsess.think_time = strtod (optarg, &end);
-	      if (end == optarg || errno == ERANGE 
+	      if (end == optarg || errno == ERANGE
 		  || param.wsess.think_time < 0.0)
 		goto bad_wsess_param;
 
@@ -627,7 +754,7 @@ main (int argc, char **argv)
 	      optarg = end + 1;
 
 	      param.wsesspage.think_time = strtod (optarg, &end);
-	      if (end == optarg || errno == ERANGE 
+	      if (end == optarg || errno == ERANGE
 		  || param.wsesspage.think_time < 0.0)
 		goto bad_wsesspage_param;
 
@@ -664,7 +791,7 @@ main (int argc, char **argv)
 	      optarg = end + 1;
 
 	      param.wsesslog.think_time = strtod (optarg, &end);
-	      if (end == optarg || errno == ERANGE 
+	      if (end == optarg || errno == ERANGE
 		  || param.wsesslog.think_time < 0.0)
 		goto bad_wsesslog_param;
 
@@ -688,6 +815,48 @@ main (int argc, char **argv)
 		{
 		bad_wsesslog_param:
 		  fprintf (stderr, "%s: %s in --wsesslog arg (rest: `%s')",
+			   prog_name, name, end);
+ 		  if (errno)
+ 		    fprintf (stderr, ": %s", strerror (errno));
+ 		  fputc ('\n', stderr);
+		  exit (1);
+		}
+	      session_workload = 1;
+	    }
+	  else if (flag == &param.wsessreq)
+	    {
+	      num_gen = 1;		/* XXX fix me---somehow */
+	      gen[0] = &wsessreq;
+
+	      stat[num_stats++] = &session_stat;
+
+	      errno = 0;
+	      name = "bad number of sessions (1st param)";
+	      param.wsessreq.num_sessions = strtoul (optarg, &end, 0);
+	      if (end == optarg || errno == ERANGE)
+		goto bad_wsessreq_param;
+	      optarg = end + 1;
+
+	      name = "bad session filename (2nd param)";
+	      if (*end != ',')
+		goto bad_wsessreq_param;
+	      optarg = end + 1;
+
+	      /* simulate parsing of string */
+	      param.wsessreq.file = optarg;
+	      if ((end = strchr (optarg, ',')) == NULL)
+		/* must be last param, position end at final \0 */
+		end = optarg + strlen(optarg);
+	      else
+		/* terminate end of string */
+		*end++ = '\0';
+	      optarg = end;
+
+	      name = "extraneous parameter";
+	      if (*end)
+		{
+		bad_wsessreq_param:
+		  fprintf (stderr, "%s: %s in --wsessreq arg (rest: `%s')",
 			   prog_name, name, end);
  		  if (errno)
  		    fprintf (stderr, ": %s", strerror (errno));
@@ -846,6 +1015,7 @@ main (int argc, char **argv)
     case PRINT_BODY:	printf (" --print-request=body"); break;
     default:		printf (" --print-request"); break;
     }
+  printf("\n*** Running httperf 0.9 patched by DK and RSH ***\n");
   if (param.hog) printf (" --hog");
   if (param.close_with_reset) printf (" --close-with-reset");
   if (param.think_timeout > 0) printf (" --think-timeout=%g",
@@ -854,6 +1024,7 @@ main (int argc, char **argv)
   printf (" --client=%u/%u", param.client.id, param.client.num_clients);
   if (param.server) printf (" --server=%s", param.server);
   if (param.server_name) printf (" --server_name=%s", param.server_name);
+  if (param.rfile_name) printf (" --rfile-name=%s", param.rfile_name);
   if (param.port) printf (" --port=%d", param.port);
   if (param.uri) printf (" --uri=%s", param.uri);
   if (param.failure_status) printf (" --failure-status=%u",
@@ -883,6 +1054,10 @@ main (int argc, char **argv)
 	  printf (" --period=e%g", param.rate.mean_iat);
 	  break;
 
+       case SPECIFIED:
+	  printf(" --period=s%s", iatf);
+	  break;
+
 	default:
 	  printf("--period=??");
 	  break;
@@ -907,6 +1082,12 @@ main (int argc, char **argv)
 	 --burst-length and any uri generator */
       printf (" --wsesslog=%u,%.3f,%s", param.wsesslog.num_sessions,
 	      param.wsesslog.think_time, param.wsesslog.file);
+    }
+   else if (param.wsessreq.num_sessions)
+    {
+
+      printf (" --wsessreq=%u,%s", param.wsessreq.num_sessions,
+	      param.wsessreq.file);
     }
   else if (param.wsesspage.num_sessions)
     {
@@ -940,7 +1121,6 @@ main (int argc, char **argv)
     (*stat[i]->init)();
   for (i = 0; i < num_gen; ++i)
     (*gen[i]->init) ();
-
   /* Update `now'.  This is to keep things accurate even when some of
      the initialization routines take a long time to execute.  */
   timer_tick ();

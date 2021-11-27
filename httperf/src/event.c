@@ -28,7 +28,7 @@
 #include <httperf.h>
 #include <event.h>
 
-#define MAX_NUM_OPS	4
+#define MAX_NUM_OPS	6
 
 static const char * const event_name[EV_NUM_EVENT_TYPES] =
   {

@@ -1,0 +1,16 @@
+/PHP/index.html think=0.0 
+/PHP/browse.html think=0.0
+/PHP/BrowseCategories.php think=0.0
+/PHP/SearchItemsByCategory.php?category=17&categoryName=Tickets+%26+Travel&page=0&nbOfItems=20 think=0.0
+/PHP/ViewItem.php?itemId=117 think=0.0
+/PHP/ViewUserInfo.php?userId=5 think=0.0
+/PHP/ViewItem.php?itemId=117 think=0.0
+/PHP/ViewBidHistory.php?itemId=117 think=0.0
+/PHP/ViewItem.php?itemId=117 think=0.0
+/PHP/SearchItemsByCategory.php?category=14&categoryName=Pottery+%26+Glass&page=0&nbOfItems=20 think=0.0
+/PHP/BrowseCategories.php think=0.0
+/PHP/SearchItemsByCategory.php?category=19&categoryName=Everything+Else&page=0&nbOfItems=20 think=0.0
+/PHP/BrowseCategories.php think=0.0
+/PHP/about_me.html think=0.0
+/PHP/AboutMe.php?nickname=user27&password=password27 think=0.0
+/PHP/index.html think=0.0

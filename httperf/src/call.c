@@ -46,6 +46,14 @@ call_init (Call *c)
   c->req.iov[IE_NEWLINE1].iov_len = 2;
   c->req.iov[IE_NEWLINE2].iov_base = (caddr_t) "\r\n";
   c->req.iov[IE_NEWLINE2].iov_len = 2;
+  c->page=(char *)malloc(sizeof(char)*2);
+  if(!c->page)
+  {
+	fprintf(stderr,"yikes...no memory \n");
+	exit(-1);
+  }
+  strcpy(c->page," ");
+  c->sess_id=-1;
 }
 
 void

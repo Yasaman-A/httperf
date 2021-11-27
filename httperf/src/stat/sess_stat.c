@@ -36,6 +36,7 @@
 #include <session.h>
 #include <stats.h>
 
+
 static struct
   {
     u_int num_rate_samples;
@@ -57,6 +58,7 @@ static struct
     u_int longest_session;
     u_int len_hist_alloced;
     u_int *len_hist;
+    
   }
 st;
 
@@ -79,7 +81,6 @@ perf_sample (Event_Type et, Object *obj, Any_Type reg_arg, Any_Type call_arg)
 {
   Time weight = call_arg.d;
   double rate;
-
   assert (et == EV_PERF_SAMPLE);
 
   rate = weight*st.num_completed_since_last_sample;
@@ -133,6 +134,7 @@ sess_destroyed (Event_Type et, Object *obj, Any_Type regarg, Any_Type callarg)
       ++st.num_completed_since_last_sample;
       ++st.num_completed;
       st.lifetime_sum += delta;
+	 // printf("\n%4.2f",delta);
     }
 
   if (priv->num_calls_completed > st.longest_session)
@@ -197,7 +199,7 @@ init (void)
   size = st.len_hist_alloced*sizeof (st.len_hist[0]);
   st.len_hist = malloc (size);
   memset (st.len_hist, 0, size);
-
+  
   st.rate_min = DBL_MAX;
 
   if (!st.len_hist)
@@ -220,7 +222,6 @@ dump (void)
 {
   double min, avg, stddev, delta;
   int i;
-
   delta = test_time_stop - test_time_start;
 
   avg = 0;
@@ -255,6 +256,7 @@ dump (void)
   for (i = 0; i <= st.longest_session; ++i)
     printf (" %u", st.len_hist[i]);
   putchar ('\n');
+ 
 }
 
 Stat_Collector session_stat =

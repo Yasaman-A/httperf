@@ -67,14 +67,13 @@ typedef struct Call
     struct Call *sendq_next;
     struct Call *recvq_next;
     Time timeout;		/* used for watchdog management */
-
     struct
       {
 	Time time_send_start;
 	Time time_recv_start;
+	Time reply;
       }
     basic;
-
     /* the request: */
     struct
       {
@@ -97,6 +96,9 @@ typedef struct Call
 	size_t footer_bytes;	/* # of footer bytes received so far */
       }
     reply;
+    /*diwa*/
+    char *page;
+    int sess_id;
   }
 Call;
 

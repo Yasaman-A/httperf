@@ -40,6 +40,8 @@
    a premature session termination would change the subsequent session
    arrival spacing.  */
 
+static int iat_index;
+
 static Time
 next_arrival_time_det (Rate_Generator *rg)
 {
@@ -61,9 +63,18 @@ static Time
 next_arrival_time_exp (Rate_Generator *rg)
 {
   Time mean = rg->rate->mean_iat;
-
   return -mean*log (1.0 - erand48 (rg->xsubi));
 }
+
+static Time
+next_arrival_time_specified (Rate_Generator *rg)
+{
+  Time next = (Time)iat_values[iat_index];
+  iat_index++;
+  if(iat_index==total_iat_values)iat_index=0;
+  return next;
+}
+
 
 static void
 tick (Timer *t, Any_Type arg)
@@ -78,6 +89,7 @@ tick (Timer *t, Any_Type arg)
   while (now > rg->next_time)
     {
       delay = (*rg->next_interarrival_time) (rg);
+	/*fprintf (stderr, "next arrival delay = %.4f\n", delay);*/
       if (verbose > 2)
 	fprintf (stderr, "next arrival delay = %.4f\n", delay);
       rg->next_time += delay;
@@ -114,7 +126,7 @@ rate_generator_start (Rate_Generator *rg, Event_Type completion_event)
   rg->xsubi[0] = 0x1234 ^ param.client.id;
   rg->xsubi[1] = 0x5678 ^ (param.client.id << 8);
   rg->xsubi[2] = 0x9abc ^ ~param.client.id;
-
+  
   arg.vp = rg;
   if (rg->rate->rate_param > 0.0)
     {
@@ -123,6 +135,7 @@ rate_generator_start (Rate_Generator *rg, Event_Type completion_event)
 	case DETERMINISTIC: func = next_arrival_time_det; break;
 	case UNIFORM:	    func = next_arrival_time_uniform; break;
 	case EXPONENTIAL:   func = next_arrival_time_exp; break;
+        case SPECIFIED:     func = next_arrival_time_specified; iat_index=0; break;
 	default:
 	  fprintf (stderr, "%s: unrecognized interarrival distribution %d\n",
 		   prog_name, rg->rate->dist);

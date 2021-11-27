@@ -73,6 +73,7 @@ conn_init (Conn *conn)
 	}
     }
 #endif
+conn->basic.connect=0;
 }
 
 void

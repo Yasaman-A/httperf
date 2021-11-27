@@ -19,7 +19,7 @@
     You should have received a copy of the GNU General Public License
     along with this program; if not, write to the Free Software
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
-    02111-1307 USA
+    02111-1307 USA-C
 */
 
 #include "config.h"
@@ -40,9 +40,6 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/resource.h>	/* grrr, must come after sys/types.h for BSD */
-#ifdef HAVE_SYS_SELECT_H
-#include <sys/select.h>
-#endif
 
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -54,32 +51,6 @@
 #include <event.h>
 #include <http.h>
 #include <conn.h>
-
-/*if we don't have GNU compatible realloc, fake it*/
-#if HAVE_REALLOC == 0
-void *rpl_realloc(void *ptr, size_t size)
-  {
-    if (ptr == NULL && size == 0)
-      {
-        return NULL;
-      }
-
-    if (size == 0)
-      {
-        free(ptr);
-	return NULL;
-      }
-
-    if (ptr == NULL)
-      {
-        return malloc(size);
-      }
-
-#undef realloc
-    return realloc(ptr, size);
-#define realloc rpl_realloc
-  }
-#endif
 
 #define HASH_TABLE_SIZE	1024	/* can't have more than this many servers */
 #define MIN_IP_PORT	IPPORT_RESERVED
@@ -97,14 +68,12 @@ Conn **sd_to_conn;
 static u_long port_free_map[((MAX_IP_PORT - MIN_IP_PORT + BITSPERLONG)
 			     / BITSPERLONG)];
 static char http10req[] =
-  " HTTP/1.0\r\nUser-Agent: httperf/"VERSION \
-  "\r\nConnection: keep-alive\r\nHost: ";
+  " HTTP/1.0\r\nUser-Agent: httperf/"VERSION"\r\nHost: ";
 static char http11req[] =
   " HTTP/1.1\r\nUser-Agent: httperf/"VERSION"\r\nHost: ";
 
 static char http10req_nohost[] =
-  " HTTP/1.0\r\nUser-Agent: httperf/"VERSION \
-  "\r\nConnection: keep-alive\r\n";
+  " HTTP/1.0\r\nUser-Agent: httperf/"VERSION"\r\n";
 static char http11req_nohost[] =
   " HTTP/1.1\r\nUser-Agent: httperf/"VERSION"\r\n";
 
@@ -380,8 +349,7 @@ set_active (Conn *s, fd_set *fdset)
 static void
 do_send (Conn *conn)
 {
-  int async_errno;
-  socklen_t len;
+  int async_errno, len;
   struct iovec *iovp;
   int sd = conn->sd;
   ssize_t nsent = 0;
@@ -432,7 +400,7 @@ do_send (Conn *conn)
 	  if (DBG > 0)
 	    fprintf (stderr, "%s.do_send: writev() failed: %s\n",
 		     prog_name, strerror (errno));
-
+		printf("\n\n here \n\n");
 	  conn_failure (conn, errno);
 	  return;
 	}
@@ -610,14 +578,6 @@ do_recv (Conn *s)
     {
       c = s->recvq;
       assert (c);
-      /* sets right start time, but doesn't update each packet */
-      if(s->state == S_REPLY_STATUS)
-      {
-        c->timeout = param.timeout + param.think_timeout;
-        if (c->timeout > 0.0)
-          c->timeout += timer_now ();
-      }
-      
       http_process_reply_bytes (c, &cp, &buf_len);
       if (s->state == S_REPLY_DONE)
 	{
@@ -808,8 +768,7 @@ core_ssl_connect (Conn *s)
 int
 core_connect (Conn *s)
 {
-  int sd, result, async_errno;
-  socklen_t len;
+  int sd, result, len, async_errno;
   struct sockaddr_in *sin;
   struct linger linger;
   int myport, optval;
@@ -930,8 +889,7 @@ core_connect (Conn *s)
 
 	  myaddr.sin_port = htons (myport);
 	  SYSCALL (BIND,
-		   result = bind (sd, (struct sockaddr *)&myaddr,
-					sizeof (myaddr)));
+		   result = bind (sd, &myaddr, sizeof (myaddr)));
 	  if (result == 0)
 	    break;
 
@@ -947,7 +905,7 @@ core_connect (Conn *s)
     }
 
   SYSCALL (CONNECT,
-	   result = connect (sd, (struct sockaddr *)sin, sizeof (*sin)));
+	   result = connect (sd, sin, sizeof (*sin)));
   if (result == 0)
     {
 #ifdef HAVE_SSL
@@ -1012,8 +970,8 @@ core_send (Conn *conn, Call *call)
   else if (!call->req.iov[IE_HOST].iov_base)
     {
       /* Default call's hostname to connection's hostname: */
-      call->req.iov[IE_HOST].iov_base = (caddr_t) conn->fqdname;
-      call->req.iov[IE_HOST].iov_len = conn->fqdname_len;
+      call->req.iov[IE_HOST].iov_base = (caddr_t) conn->hostname;
+      call->req.iov[IE_HOST].iov_len = conn->hostname_len;
     }
 
   /* NOTE: the protocol version indicates what the _client_ can
